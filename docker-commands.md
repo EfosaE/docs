@@ -318,3 +318,19 @@ docker logs -f myapp > app.log 2>&1 &
 docker inspect --format='{{.State.Health.Status}}' myapp
 # Output: healthy, unhealthy, or starting
 ```
+
+
+### Run Asynqmon (Web UI for asynq using docker)
+```bash 
+     docker run --rm `
+>>   --name asynqmon `
+>>   -p 8088:8080 `
+>>   -e REDIS_ADDR=host.docker.internal:6379 `
+>>   -d
+>>   hibiken/asynqmon
+```
+Asynq Monitoring WebUI server is listening on port 8080
+
+
+### 3. Go into th container kernel to observe its content
+docker exec -it d79d043fd6f5 sh
