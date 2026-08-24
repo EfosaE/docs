@@ -4,6 +4,8 @@ A production-shaped simulation of the **NIBSS Instant Payment (NIP)** interbank 
 
 This service does not talk to NIBSS. It **is** a stand-in NIBSS: a separate Java system that owns bank routing, name enquiry, transfer processing, status tracking and callbacks — the same responsibilities the real switch owns — so that Credora is forced to solve the same class of distributed-systems problems it would face integrating with a real payment rail.
 
+> **Naming disclaimer:** every institution, bank code, account number and account name in this README — including "Ridgeway Bank" and "Solace Microfinance Bank" below — is fictional. None of them correspond to real CBN-licensed institutions, and none of the codes are real NIBSS institution codes. See [Simulated bank codes](#simulated-bank-codes) for why that matters.
+
 ---
 
 ## Table of contents
@@ -11,9 +13,13 @@ This service does not talk to NIBSS. It **is** a stand-in NIBSS: a separate Java
 - [Why this exists](#why-this-exists)
 - [How this maps to the real NIBSS](#how-this-maps-to-the-real-nibss)
 - [System architecture](#system-architecture)
+- [What `simulated-bank-a` and `simulated-bank-b` actually are](#what-simulated-bank-a-and-simulated-bank-b-actually-are)
 - [How Credora integrates](#how-credora-integrates)
 - [Domain model](#domain-model)
+- [Domain object examples](#domain-object-examples)
+- [Simulated bank codes](#simulated-bank-codes)
 - [API reference](#api-reference)
+- [End-to-end worked example](#end-to-end-worked-example)
 - [Response codes](#response-codes)
 - [Session ID / reference format](#session-id--reference-format)
 - [Failure & latency simulation](#failure--latency-simulation)
@@ -37,7 +43,7 @@ The design goal is explicitly **not** "clone every NIBSS endpoint." It's to buil
 
 ## How this maps to the real NIBSS
 
-NIBSS (Nigeria Inter-Bank Settlement System) operates **NIP (NIBSS Instant Payment)**, the real-time interbank funds transfer rail used across Nigerian banks and licensed fintechs. Per NIBSS's own service description, NIP exposes a small set of core operations that this simulator deliberately mirrors:
+NIBSS (Nigeria Inter-Bank Settlement System) operates **NIP (NIBSS Instant Payment)**, the real-time interbank funds transfer rail used across Nigerian banks, microfinance banks and licensed mobile money operators as direct participants. Per NIBSS's own service description, NIP exposes a small set of core operations that this simulator deliberately mirrors:
 
 | Real NIP capability | Simulated here |
 |---|---|
@@ -47,9 +53,9 @@ NIBSS (Nigeria Inter-Bank Settlement System) operates **NIP (NIBSS Instant Payme
 | Balance Enquiry | Out of scope for V1 (Credora doesn't need it for outbound transfers) |
 | Funds Transfer (Direct Debit) / standing orders | Out of scope |
 
-NIP is a **Deferred Net Settlement (DNS)** system: funds appear in the beneficiary's account online, in real time, before the underlying interbank settlement is finalized in one of the scheme's settlement sessions. That real-time-availability-before-settlement property is exactly why reconciliation, idempotency, and status-query machinery matter — a bank can't just "wait for settlement" to know whether a transfer succeeded, and neither can Credora.
+NIP is a real-time, account-number-based EFT platform: transaction messages move from the Sending Institution to the Receiving Institution instantly, and settlement between institutions happens in one of several scheduled settlement sessions per day rather than transaction-by-transaction. That real-time-availability-ahead-of-settlement property is exactly why reconciliation, idempotency, and status-query machinery matter — a bank can't just "wait for settlement" to know whether a transfer succeeded, and neither can Credora.
 
-In the real world, access to NIP is not self-service. A financial institution or PSSP must go through NIBSS certification — a formal letter of intent, application and device certification, multi-week code audits and penetration testing — before going live. Smaller fintechs almost always integrate indirectly through a licensed aggregator instead. That's the exact reason this project exists as a **simulator**: it lets Credora behave like it holds that access without requiring a license, a leased line, or a certification cycle.
+In the real world, access to NIP is not self-service. A financial institution or PSSP must go through NIBSS certification — a formal letter of intent, application and device certification, multi-week code audits and penetration testing, and typically a dedicated VPN/leased-line connection to NIBSS — before going live. Smaller fintechs almost always integrate indirectly through a licensed aggregator instead. That's the exact reason this project exists as a **simulator**: it lets Credora behave like it holds that access without requiring a license, a leased line, or a certification cycle.
 
 ## System architecture
 
@@ -70,6 +76,7 @@ In the real world, access to NIP is not self-service. A financial institution or
               ┌─────────────────────────┐
               │   NIBSS SIMULATOR       │
               │   Java 21 / Spring Boot │
+              │   ("the switch")        │
               │                         │
               │  Bank Directory         │
               │  Name Enquiry           │
@@ -81,8 +88,8 @@ In the real world, access to NIP is not self-service. A financial institution or
               └──────┬─────────┬────────┘
                      │         │
               ┌──────▼──┐  ┌───▼─────┐
-              │ Bank A  │  │ Bank B  │   ...simulated participant banks,
-              │ svc     │  │ svc     │   each with its own latency/
+              │Ridgeway │  │ Solace  │   ...simulated participant banks,
+              │  Bank   │  │  MFB    │   each with its own latency/
               └─────────┘  └─────────┘   failure profile
 ```
 
@@ -105,14 +112,37 @@ type PaymentRail interface {
        (dev/test)          (prod)
 ```
 
+## What `simulated-bank-a` and `simulated-bank-b` actually are
+
+This is the piece that's easiest to gloss over, so it's worth spelling out.
+
+In the real NIP network, **NIBSS is the switch, not a bank**. When a transfer targets an account at, say, GTBank, NIBSS doesn't hold that account or know its balance — it forwards the request over the network to GTBank's own core banking system, which owns the account, does the actual credit/debit, and sends a response back through NIBSS. NIBSS's job is purely routing, messaging, and settlement bookkeeping between institutions; each *participant institution* runs its own independent system behind its own connection to the switch.
+
+`simulated-bank-a` and `simulated-bank-b` exist to reproduce that shape, not to be an implementation detail of the simulator. They are **two separate, independently-deployed Spring Boot services** — not modules inside `nibss-simulator` — standing in for two fictional participant institutions:
+
+| Folder | Represents | Role |
+|---|---|---|
+| `nibss-simulator/` | NIBSS itself | The switch: bank directory, routing, name enquiry orchestration, transfer lifecycle, callbacks. **Owns no customer accounts.** |
+| `simulated-bank-a/` | "Ridgeway Bank" (fictional commercial bank) | A participant institution's core banking stand-in: owns its own `BankAccount` records and balances, decides whether a name enquiry or debit/credit succeeds, and applies its own configured latency/failure profile. |
+| `simulated-bank-b/` | "Solace Microfinance Bank" (fictional MFB) | Same role as Ridgeway, but modeled as a smaller/slower participant — MFBs and other non-bank NIP participants are typically less reliable and higher-latency than tier-1 commercial banks, which is worth exercising separately. |
+
+Concretely, this means:
+
+- The **Transfer Router** inside `nibss-simulator` doesn't have direct database access to accounts at Ridgeway or Solace. It makes an HTTP call (`client/RidgewayBankClient`, `client/SolaceMfbClient`) to that bank's own service, the same way the real switch forwards a message over the network rather than reading another bank's database.
+- Each bank service has its own Postgres schema (or its own database entirely) with its own `accounts` table, seeded independently — `nibss-simulator`'s own DB only stores `Bank`, `Transfer`, and `CallbackAttempt` rows, never account balances for banks it isn't itself.
+- Each bank service can be started, stopped, or reconfigured independently (`docker compose stop bank-b` to simulate an entire participant institution going offline is a realistic failure mode NIBSS itself has to handle).
+- Adding a third participant later (e.g. a fictional mobile money operator) means adding a third sibling service and a `Bank` directory row pointing at it — `nibss-simulator` itself shouldn't need code changes beyond configuration.
+
+This is also why the project structure calls them out as siblings of `nibss-simulator/` rather than packages under `src/main/java/com/example/nibss/` — they are deliberately a Go-service-caller ↔ Java-switch ↔ Java-participant-bank chain of three independently-owned systems, which is what actually forces you to build idempotent, retry-safe, partial-failure-tolerant integration code instead of a single well-behaved monolith.
+
 ## How Credora integrates
 
-End-to-end flow for a ₦10,000 outbound transfer from a Credora customer to an account at a simulated Bank A:
+End-to-end flow for a ₦10,000 outbound transfer from a Credora customer to an account at Ridgeway Bank:
 
 1. Credora validates the request and calls `POST /name-enquiry` against the simulator to confirm the destination account and get the account name for the user to confirm.
 2. Credora debits the sender inside a DB transaction and writes a `TRANSFER_INITIATED` outbox event.
 3. A background worker (Asynq) picks up the event and calls `POST /transfers` against the simulator with an idempotent `requestId`.
-4. The simulator's Transfer Router resolves the destination bank from the bank code and forwards the request to the matching simulated bank service, applying that bank's configured latency/failure profile.
+4. The simulator's Transfer Router resolves the destination bank from the bank code (`990001` → Ridgeway Bank) and forwards the request to Ridgeway's own service, applying Ridgeway's configured latency/failure profile.
 5. The simulator responds synchronously with `PROCESSING` (or, depending on configuration, an immediate terminal state), and later pushes the terminal state to Credora's webhook endpoint.
 6. Credora's webhook handler verifies the signature, checks idempotency on the `reference`, and updates the ledger and transfer status exactly once — the same pattern Credora already uses for inbound Monnify webhooks.
 7. If Credora never receives a callback (simulated network partition, dropped response), it falls back to polling `GET /transfers/{reference}` and reconciling.
@@ -122,7 +152,7 @@ End-to-end flow for a ₦10,000 outbound transfer from a Credora customer to an 
 ```
 Bank
  ├── id
- ├── code            // CBN-style institution/bank code, e.g. "000013"
+ ├── code            // simulator-issued institution code, e.g. "990001"
  ├── name
  ├── active
  └── simulationProfile (latencyMs, failureRate, availability)
@@ -157,6 +187,128 @@ CallbackAttempt
  └── httpStatus
 ```
 
+## Domain object examples
+
+Concrete, realistic values for each domain object — useful as fixtures for seed data, Postgres inserts, or JUnit test builders.
+
+### `Bank`
+
+```json
+{
+  "id": "b7e6a1f0-2c34-4e11-9f2a-1a2b3c4d5e6f",
+  "code": "990001",
+  "name": "Ridgeway Bank",
+  "active": true,
+  "simulationProfile": {
+    "availability": 0.99,
+    "averageLatencyMs": 300,
+    "failureRate": 0.01
+  }
+}
+```
+
+```json
+{
+  "id": "c1d2e3f4-5678-49ab-8cde-f0123456789a",
+  "code": "990002",
+  "name": "Solace Microfinance Bank",
+  "active": true,
+  "simulationProfile": {
+    "availability": 0.90,
+    "averageLatencyMs": 2200,
+    "failureRate": 0.15
+  }
+}
+```
+
+An inactive bank, used to exercise response code `03` (invalid receiving institution):
+
+```json
+{
+  "id": "9f8e7d6c-5b4a-4321-9876-abcdef012345",
+  "code": "990099",
+  "name": "Northgate Digital Bank (decommissioned)",
+  "active": false,
+  "simulationProfile": {
+    "availability": 0.0,
+    "averageLatencyMs": 0,
+    "failureRate": 1.0
+  }
+}
+```
+
+### `BankAccount` (owned by `simulated-bank-a` / Ridgeway Bank's own DB, not by `nibss-simulator`)
+
+```json
+{
+  "id": "1a2b3c4d-5e6f-4708-9012-3456789abcde",
+  "bankCode": "990001",
+  "accountNumber": "1234567890",
+  "accountName": "JOHN DOE",
+  "balance": 850000000
+}
+```
+
+> `balance` is in kobo, same convention as `Transfer.amount` — ₦8,500,000.00.
+
+### `Transfer` — full lifecycle of one record
+
+```json
+{
+  "id": "6d5c4b3a-2918-4776-a5f4-e3d2c1b0a9f8",
+  "requestId": "credora-8f73c1e2-4a5b-4c6d-9e0f-1a2b3c4d5e6f",
+  "reference": "NIBSS-20260821-000928381",
+  "sessionId": "990001260821103000001234567890",
+  "senderBankCode": "999999",
+  "senderAccount": "1000000001",
+  "destinationBankCode": "990001",
+  "destinationAccount": "1234567890",
+  "amount": 5000000,
+  "currency": "NGN",
+  "narration": "Payment for invoice #4521",
+  "status": "SUCCESS",
+  "responseCode": "00",
+  "createdAt": "2026-08-21T10:29:58Z",
+  "updatedAt": "2026-08-21T10:30:01Z"
+}
+```
+
+> `senderBankCode` `999999` is Credora's own simulator-registered institution code — the code the simulator was given when Credora "onboarded" as a participant, distinct from the destination bank codes above.
+
+### `CallbackAttempt`
+
+```json
+{
+  "transferId": "6d5c4b3a-2918-4776-a5f4-e3d2c1b0a9f8",
+  "attemptNumber": 1,
+  "deliveredAt": null,
+  "httpStatus": 504
+}
+```
+```json
+{
+  "transferId": "6d5c4b3a-2918-4776-a5f4-e3d2c1b0a9f8",
+  "attemptNumber": 2,
+  "deliveredAt": "2026-08-21T10:30:07Z",
+  "httpStatus": 200
+}
+```
+
+Two rows for the same `transferId` model exactly the "clean timeout then successful retry" callback-delivery scenario described under [Failure & latency simulation](#failure--latency-simulation).
+
+## Simulated bank codes
+
+Real NIBSS institution/bank codes are 3-digit CBN-assigned identifiers (GTBank is `058`, for example) used across NIP, USSD (`*737#`-style routing) and banking apps. This simulator deliberately does **not** reuse real codes for its fictional banks — doing so would make seeded test data look like it belongs to an actual institution, which is exactly the kind of confusion the project's own disclaimer exists to avoid.
+
+Instead, simulated institutions use a `99xxxx` range that cannot collide with any real CBN-assigned code:
+
+| Code | Institution | Type |
+|---|---|---|
+| `990001` | Ridgeway Bank | Fictional commercial bank |
+| `990002` | Solace Microfinance Bank | Fictional MFB |
+| `990099` | Northgate Digital Bank | Fictional, inactive — for negative-path tests |
+| `999999` | Credora (sending institution) | Credora's own simulator-registered code |
+
 ## API reference
 
 ### `GET /banks`
@@ -165,8 +317,8 @@ Bank directory — Credora needs this to know where to route a transfer.
 
 ```json
 [
-  { "code": "000013", "name": "Bank A", "active": true },
-  { "code": "000014", "name": "Bank B", "active": true }
+  { "code": "990001", "name": "Ridgeway Bank", "active": true },
+  { "code": "990002", "name": "Solace Microfinance Bank", "active": true }
 ]
 ```
 
@@ -176,7 +328,7 @@ Validate a beneficiary account before money moves. Mirrors NIP's real Name Enqui
 
 Request:
 ```json
-{ "bankCode": "000013", "accountNumber": "1234567890" }
+{ "bankCode": "990001", "accountNumber": "1234567890" }
 ```
 
 Response:
@@ -185,23 +337,42 @@ Response:
   "responseCode": "00",
   "accountNumber": "1234567890",
   "accountName": "JOHN DOE",
-  "bankCode": "000013",
-  "bankName": "Bank A",
-  "sessionId": "000013260821103000001234567890"
+  "bankCode": "990001",
+  "bankName": "Ridgeway Bank",
+  "sessionId": "990001260821103000001234567890"
+}
+```
+
+Name enquiry against an account that doesn't exist at Ridgeway (`07` — invalid account):
+
+Request:
+```json
+{ "bankCode": "990001", "accountNumber": "0000000000" }
+```
+
+Response:
+```json
+{
+  "responseCode": "07",
+  "accountNumber": "0000000000",
+  "accountName": null,
+  "bankCode": "990001",
+  "bankName": "Ridgeway Bank",
+  "sessionId": "990001260821103000000000000000"
 }
 ```
 
 ### `POST /transfers`
 
-The core operation. Acts as a switch: resolves `destinationBankCode`, routes to the matching simulated bank, and returns either a terminal result or a `PROCESSING` state that resolves later via callback.
+The core operation. Acts as a switch: resolves `destinationBankCode`, routes to the matching simulated bank service, and returns either a terminal result or a `PROCESSING` state that resolves later via callback.
 
 Request:
 ```json
 {
-  "requestId": "credora-8f73c1e2-...",
+  "requestId": "credora-8f73c1e2-4a5b-4c6d-9e0f-1a2b3c4d5e6f",
   "senderBankCode": "999999",
   "senderAccount": "1000000001",
-  "destinationBankCode": "000013",
+  "destinationBankCode": "990001",
   "destinationAccount": "1234567890",
   "amount": 5000000,
   "currency": "NGN",
@@ -215,9 +386,47 @@ Response (immediate):
 ```json
 {
   "reference": "NIBSS-20260821-000928381",
-  "sessionId": "000013260821103000001234567890",
+  "sessionId": "990001260821103000001234567890",
   "status": "PROCESSING",
   "responseCode": "00"
+}
+```
+
+A same-`requestId` retry against a transfer that already succeeded (response code `94` — duplicate transaction, original result returned rather than double-processed):
+
+Response:
+```json
+{
+  "reference": "NIBSS-20260821-000928381",
+  "sessionId": "990001260821103000001234567890",
+  "status": "SUCCESS",
+  "responseCode": "94"
+}
+```
+
+A transfer routed to Solace Microfinance Bank that fails on insufficient funds:
+
+Request:
+```json
+{
+  "requestId": "credora-3b2a1c9d-8e7f-4a6b-9c5d-2e1f0a9b8c7d",
+  "senderBankCode": "999999",
+  "senderAccount": "1000000001",
+  "destinationBankCode": "990002",
+  "destinationAccount": "5551239876",
+  "amount": 12000000000,
+  "currency": "NGN",
+  "narration": "Rent payment"
+}
+```
+
+Response:
+```json
+{
+  "reference": "NIBSS-20260821-000928402",
+  "sessionId": "990002260821104512000005551239876",
+  "status": "FAILED",
+  "responseCode": "51"
 }
 ```
 
@@ -235,6 +444,18 @@ Transaction Status Query — the mechanism Credora falls back to when it can't b
 }
 ```
 
+Status query on a reference the simulator has no record of (`25` — unable to locate record):
+
+```json
+{
+  "reference": "NIBSS-20260821-999999999",
+  "status": "UNKNOWN",
+  "responseCode": "25",
+  "amount": null,
+  "destinationAccountName": null
+}
+```
+
 ### `POST` (outbound, simulator → Credora) `/webhooks/nibss/transfer`
 
 The callback dispatcher. Signed with HMAC-SHA256 over the raw body using a shared secret, mirroring how Credora already verifies inbound Monnify webhooks.
@@ -246,6 +467,14 @@ The callback dispatcher. Signed with HMAC-SHA256 over the raw body using a share
   "amount": 5000000,
   "timestamp": "2026-08-21T10:30:00Z"
 }
+```
+
+Headers sent alongside the body:
+
+```
+X-NIBSS-Signature: 8f1a2e...   (hex-encoded HMAC-SHA256 of the raw body)
+X-NIBSS-Timestamp: 2026-08-21T10:30:00Z
+Content-Type: application/json
 ```
 
 ### Simulation control plane (`/simulation/...`, non-production surface)
@@ -263,7 +492,18 @@ POST /simulation/banks/{bankCode}/chaos/duplicate-callback
 POST /simulation/reset
 ```
 
-This is what turns the project from "a fake API" into an actual chaos-testable rail: you can tell Bank B "fail 30% of requests, average 2s latency" and watch how Credora's retry, timeout and reconciliation logic actually behaves under it.
+This is what turns the project from "a fake API" into an actual chaos-testable rail: you can tell Solace Microfinance Bank "fail 30% of requests, average 2s latency" and watch how Credora's retry, timeout and reconciliation logic actually behaves under it.
+
+## End-to-end worked example
+
+Putting the pieces above together — a single ₦50,000 transfer from Credora's customer to John Doe's account at Ridgeway Bank, traced request by request:
+
+1. **Credora → simulator**, `POST /name-enquiry` with `{"bankCode": "990001", "accountNumber": "1234567890"}` → simulator forwards to `simulated-bank-a`, gets back `JOHN DOE`, responds `responseCode: "00"`.
+2. **Credora → simulator**, `POST /transfers` with `requestId: "credora-8f73c1e2-..."`, `destinationBankCode: "990001"`, `amount: 5000000` → simulator persists a `Transfer` row with `status: INITIATED`, generates `reference: "NIBSS-20260821-000928381"` and `sessionId`, responds `202`-style with `status: "PROCESSING"`.
+3. **Simulator → `simulated-bank-a`** (internal, not visible to Credora): the Transfer Router calls Ridgeway's own transfer endpoint, waits out Ridgeway's configured `averageLatencyMs: 300`, gets back a debit/credit confirmation.
+4. **Simulator updates its own `Transfer` row** to `status: SUCCESS`, `responseCode: "00"`.
+5. **Simulator → Credora**, `POST /webhooks/nibss/transfer` with the signed callback body from above. Credora's webhook handler checks `reference` against its own store, finds it already applied → no-op (idempotent).
+6. If step 5's HTTP call had instead timed out, Credora would eventually call **`GET /transfers/NIBSS-20260821-000928381`**, see `status: "SUCCESS"` from the simulator's persisted state, and reconcile without ever having received the callback.
 
 ## Response codes
 
@@ -272,7 +512,7 @@ NIP, like most interbank rails, returns ISO 8583–style two-character response 
 | Code | Meaning | Simulated trigger |
 |---|---|---|
 | `00` | Approved / successful | Happy path |
-| `03` | Invalid sender/receiving institution | Unknown bank code |
+| `03` | Invalid sender/receiving institution | Unknown or inactive bank code (e.g. `990099`) |
 | `07` | Invalid account | Name enquiry against a non-existent account |
 | `12` | Invalid transaction | Malformed request |
 | `13` | Invalid amount | Zero/negative amount |
@@ -291,6 +531,10 @@ Real NIP transactions carry a **Session ID**, generated by the source institutio
 
 ```
 sessionId = {institutionCode:6}{YYMMDD:6}{HHmmss:6}{sequence:15}
+
+example: 990001 260821 103000 001234567890 → "990001260821103000001234567890"
+          Ridgeway   21 Aug    10:30:00      sequence
+          Bank       2026
 ```
 
 The simulator additionally issues its own `reference` (`NIBSS-{yyyyMMdd}-{sequence}`) that Credora stores alongside its own `requestId` — the standard three-identifier pattern (client idempotency key, network session ID, provider reference) that real payment-rail integrations end up needing.
@@ -301,9 +545,9 @@ Each simulated bank carries a configurable profile:
 
 ```yaml
 banks:
-  "000013": { name: "Bank A", availability: 0.99, avgLatencyMs: 300,  failureRate: 0.01 }
-  "000014": { name: "Bank B", availability: 0.95, avgLatencyMs: 2000, failureRate: 0.10 }
-  "000015": { name: "Bank C", availability: 0.70, avgLatencyMs: 5000, failureRate: 0.30 }
+  "990001": { name: "Ridgeway Bank",              availability: 0.99, avgLatencyMs: 300,  failureRate: 0.01 }
+  "990002": { name: "Solace Microfinance Bank",    availability: 0.90, avgLatencyMs: 2200, failureRate: 0.15 }
+  "990099": { name: "Northgate Digital Bank",      availability: 0.00, avgLatencyMs: 0,    failureRate: 1.00 }
 ```
 
 This is what produces the failure modes worth building the rest of the system for:
@@ -357,18 +601,30 @@ nibss-simulator/
 │   ├── domain/              # Bank, BankAccount, Transfer, CallbackAttempt
 │   ├── repository/          # Spring Data JPA repositories
 │   ├── client/               # per-simulated-bank HTTP clients
+│   │                          # (RidgewayBankClient, SolaceMfbClient)
 │   ├── security/             # HMAC signing/verification, API key filter
 │   ├── config/                # bank profile config, async/retry config
 │   └── exception/              # domain exceptions → response-code mapping
 ├── src/main/resources/
 │   ├── db/migration/           # Flyway SQL
 │   └── application.yml
-├── simulated-bank-a/            # separate Spring Boot service
-├── simulated-bank-b/            # separate Spring Boot service
+├── simulated-bank-a/            # separate Spring Boot service — "Ridgeway Bank"
+├── simulated-bank-b/            # separate Spring Boot service — "Solace Microfinance Bank"
 └── docker-compose.yml            # nibss-simulator + bank services + postgres
 ```
 
-Bank A and Bank B are deliberately separate services rather than in-process stubs — that's what gives the project real cross-service communication to practice, on top of the Go ↔ Java boundary between Credora and the simulator.
+`simulated-bank-a` and `simulated-bank-b` are siblings of `nibss-simulator/`, not packages inside it — see [What `simulated-bank-a` and `simulated-bank-b` actually are](#what-simulated-bank-a-and-simulated-bank-b-actually-are) for why that separation is deliberate. Each has its own minimal internal structure mirroring a tiny core-banking stand-in:
+
+```
+simulated-bank-a/
+├── src/main/java/com/example/ridgeway/
+│   ├── controller/         # AccountController (internal name-enquiry/debit-credit endpoints)
+│   ├── domain/              # Account
+│   └── repository/
+├── src/main/resources/
+│   ├── db/migration/
+│   └── application.yml       # its own latency/failure profile, independent of nibss-simulator's copy
+```
 
 ## Build order (V1 → V3)
 
@@ -385,19 +641,20 @@ The `/simulation/...` endpoints for live-adjustable failure rate, latency, and t
 
 These are the scenarios the simulator should be able to produce on demand, and that Credora's integration should be tested against:
 
-1. `Credora → NIBSS → Bank A → SUCCESS` (happy path)
-2. `Credora → NIBSS → Bank A → TIMEOUT` (no response at all)
-3. `Credora → NIBSS → Bank A → SUCCESS`, then the callback is lost — Credora only learns the true state via status query/reconciliation
+1. `Credora → NIBSS → Ridgeway Bank → SUCCESS` (happy path)
+2. `Credora → NIBSS → Ridgeway Bank → TIMEOUT` (no response at all)
+3. `Credora → NIBSS → Ridgeway Bank → SUCCESS`, then the callback is lost — Credora only learns the true state via status query/reconciliation
 4. Credora retries after a perceived timeout → the simulator must detect the duplicate `requestId` and return the original result, not process it twice
 5. The simulator dispatches the same callback twice → Credora's webhook handler must be idempotent
 6. Simulator processes a transfer, then Credora crashes before receiving the callback; on restart Credora reconciles anything stuck in `PROCESSING`
+7. Transfer to Solace Microfinance Bank fails with `51` (insufficient funds) — exercises the "expected business failure, not an infrastructure failure" path Credora must distinguish from timeouts
 
 ## Running locally
 
 **Requirements:** Java 21, Docker (for Postgres + the simulated bank services), Gradle
 
 ```bash
-# start Postgres + simulated Bank A / Bank B
+# start Postgres + simulated Ridgeway Bank / Solace MFB
 docker compose up -d postgres bank-a bank-b
 
 # run migrations
