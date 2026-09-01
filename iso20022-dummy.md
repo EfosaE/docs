@@ -49,6 +49,101 @@ reading the payloads who already knows ISO 20022.
 
 ---
 
+## Element Glossary
+
+Plain-English meaning of every abbreviated XML element/attribute used across
+the four message types below. Elements marked **(custom)** are not part of
+generic ISO 20022 — they're the Nigerian/NIP-NPS-specific additions called out
+in the deviations table above.
+
+| Element / Attribute | Full name | Meaning |
+|---|---|---|
+| `Document` | Document | Root element wrapping the message body |
+| `CstmrCdtTrfInitn` | Customer Credit Transfer Initiation | Body of a pain.001 message |
+| `GrpHdr` | Group Header | Header info common to the whole message (ID, timestamp, counts) |
+| `MsgId` | Message Identification | Unique ID for this message instance |
+| `CreDtTm` | Creation Date Time | When the message was created |
+| `NbOfTxs` | Number Of Transactions | Count of transactions in this message/batch |
+| `CtrlSum` | Control Sum | Sum of all transaction amounts, for integrity checking |
+| `InitgPty` | Initiating Party | Who originated/requested the payment (e.g. Credora) |
+| `Nm` | Name | A person's, party's, or institution's display name |
+| `PmtInf` | Payment Information | A block of one or more payments sharing debtor/execution info |
+| `PmtInfId` | Payment Information Identification | ID for this PmtInf block |
+| `PmtMtd` | Payment Method | How the payment moves; `TRF` = credit transfer |
+| `BtchBookg` | Batch Booking | Whether transactions in the batch should be booked as one entry (`true`) or individually (`false`) |
+| `PmtTpInf` | Payment Type Information | Classifies the type/urgency of the payment |
+| `SvcLvl` | Service Level | Agreed service level for processing; `Cd` here is `NURG` (non-urgent/batch) or `INST` (instant, the NIP/NPS real-time rail) |
+| `Cd` | Code | A coded value (meaning depends on context — service level, balance type, status reason, etc.) |
+| `ReqdExctnDt` | Requested Execution Date | Date the customer wants the payment executed |
+| `Dbtr` | Debtor | The party whose account is debited (the payer) |
+| `DbtrAcct` | Debtor Account | The debtor's account |
+| `DbtrAgt` | Debtor Agent | The debtor's bank |
+| `CdtTrfTxInf` | Credit Transfer Transaction Information | One individual credit transfer transaction |
+| `PmtId` | Payment Identification | Identifiers for one transaction (`InstrId`, `EndToEndId`) |
+| `InstrId` | Instruction Identification | ID assigned by the instructing party for this instruction |
+| `EndToEndId` | End To End Identification | ID that travels unchanged from originator to beneficiary, across all hops |
+| `Amt` | Amount | Wrapper for the monetary amount |
+| `InstdAmt` | Instructed Amount | The amount the debtor instructed to be paid |
+| `Ccy` (attribute) | Currency | ISO 4217 currency code attached to an amount, e.g. `NGN` |
+| `ChrgBr` | Charge Bearer | Who pays the transfer fee: `SHAR` (shared), `DEBT` (debtor), `CRED` (creditor) |
+| `CdtrAgt` | Creditor Agent | The beneficiary's bank |
+| `Cdtr` | Creditor | The party whose account is credited (the beneficiary/payee) |
+| `CdtrAcct` | Creditor Account | The creditor's account |
+| `RmtInf` | Remittance Information | Free-text or structured info about what the payment is for |
+| `Ustrd` | Unstructured | Free-text remittance narration (as opposed to structured codes) |
+| `Id` | Identification | Generic wrapper for an identifier (account ID, balance type ID, etc.) |
+| `NUBAN` **(custom)** | Nigerian Uniform Bank Account Number | 10-digit Nigerian domestic account number; replaces IBAN, which doesn't apply in Nigeria |
+| `FinInstnId` | Financial Institution Identification | Identifies a bank/financial institution |
+| `InstnCode` **(custom)** | Institution Code | CBN/NIBSS-assigned bank sort code (e.g. `044` = Access Bank, `058` = GTBank); replaces BIC/SWIFT-style `ClrSysMmbId` |
+| `FIToFICstmrCdtTrf` | Financial Institution To Financial Institution Customer Credit Transfer | Body of a pacs.008 message — the interbank leg |
+| `SttlmInf` | Settlement Information | How the interbank leg will be settled |
+| `SttlmMtd` | Settlement Method | Settlement mechanism code; `CLRG` = clearing (real-time gross settlement style used here) |
+| `SessionId` **(custom)** | Session Identification | Switch-assigned reference tying together a pacs.008 request, its pacs.002 response, and the related camt.053 statement entry |
+| `NameEnquiryRef` **(custom)** | Name Enquiry Reference | Reference from the mandatory pre-transfer Name Enquiry call required by NIP/NPS |
+| `IntrBkSttlmAmt` | Interbank Settlement Amount | The amount actually settled between the two banks |
+| `IntrBkSttlmDt` | Interbank Settlement Date | Date the interbank settlement occurs |
+| `FIToFIPmtStsRpt` | Financial Institution To Financial Institution Payment Status Report | Body of a pacs.002 message — status of a previously sent payment |
+| `OrgnlGrpInfAndSts` | Original Group Information And Status | Identifies which original message this status report refers to |
+| `OrgnlMsgId` | Original Message Identification | `MsgId` of the original pacs.008 being reported on |
+| `OrgnlMsgNmId` | Original Message Name Identification | Message type name of the original message, e.g. `pacs.008.001.08` |
+| `TxInfAndSts` | Transaction Information And Status | Status of one individual transaction |
+| `OrgnlInstrId` | Original Instruction Identification | `InstrId` from the original transaction |
+| `OrgnlEndToEndId` | Original End To End Identification | `EndToEndId` from the original transaction |
+| `TxSts` | Transaction Status | Standard ISO 20022 status code, e.g. `ACSC` (AcceptedSettlementCompleted), `RJCT` (Rejected), `PDNG` (Pending) |
+| `StsRsnInf` | Status Reason Information | Explains why a transaction has a given status (mainly used on rejects) |
+| `Rsn` | Reason | Wrapper for the standard ISO 20022 reason code |
+| `NipRspCd` **(custom)** | NIP Response Code | Raw NIP/NPS switch response code, carried alongside the standard ISO reason code |
+| `AddtlInf` | Additional Information | Free-text elaboration on the status/reason |
+| `AccptncDtTm` | Acceptance Date Time | When the transaction was accepted |
+| `BkToCstmrStmt` | Bank To Customer Statement | Body of a camt.053 message |
+| `Stmt` | Statement | One account statement |
+| `ElctrncSeqNb` | Electronic Sequence Number | Sequential number of this statement for the account (increments each statement) |
+| `FrToDt` | From To Date | The date/time range the statement covers |
+| `FrDtTm` | From Date Time | Start of the statement period |
+| `ToDtTm` | To Date Time | End of the statement period |
+| `Acct` | Account | The account the statement is for |
+| `Ownr` | Owner | The account holder |
+| `Svcr` | Servicer | The bank that services/holds the account |
+| `Bal` | Balance | An opening or closing balance entry |
+| `Tp` | Type | Wrapper for a type code (used for balance type here) |
+| `CdtDbtInd` | Credit Debit Indicator | Whether an amount is a credit (`CRDT`) or debit (`DBIT`) |
+| `Dt` | Date | A plain date value |
+| `Ntry` | Entry | One statement line item (a settled or pending transaction) |
+| `NtryRef` | Entry Reference | Reference/ID for this statement entry |
+| `Sts` | Status | Entry status; `BOOK` = booked/settled, `PDNG` = pending |
+| `BookgDt` | Booking Date | Date the entry was booked to the account |
+| `ValDt` | Value Date | Date the entry is value-dated for interest/availability purposes |
+| `BkTxCd` | Bank Transaction Code | Bank's internal transaction category code (kept as a generic string here) |
+| `NtryDtls` | Entry Details | Wrapper for detailed transaction info behind a statement entry |
+| `TxDtls` | Transaction Details | The underlying transaction details for an entry |
+| `Refs` | References | Wrapper for the identifiers tying an entry back to its originating transaction |
+| `RltdPties` | Related Parties | The debtor/creditor associated with a statement entry |
+
+Note on `Bal/Tp/Cd` values specifically: `OPBD` = Opening Booked (balance at
+start of period) and `CLBD` = Closing Booked (balance at end of period).
+
+---
+
 ## 1. pain.001 — Customer Credit Transfer Initiation
 
 ### XSD (`pain.001.simplified.xsd`)
